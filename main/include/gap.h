@@ -5,6 +5,7 @@
 /* NimBLE GAP APIs */
 #include "host/ble_gap.h"
 #include "services/gap/ble_svc_gap.h"
+#include <stdbool.h>
 #include <stdint.h>
 
 extern bool device_connected;

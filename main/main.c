@@ -19,13 +19,19 @@
 #define CONV_FRAME_SIZE (NUM_CHANNELS * PACKET_LEN * SOC_ADC_DIGI_RESULT_BYTES)
 #define MAX_STORE_BUF_SIZE (CONV_FRAME_SIZE * 10)
 
-// #define DEBUG
-#ifdef DEBUG
+// #define DEBUG      // To disable light sleep & enable debug statements
+// #define SECONDARY_CH // To use adc channel 3-5, default is 0-2
+
+#ifdef SECONDARY_CH
 uint8_t channels[NUM_CHANNELS] = {3, 4, 5};
 #else
 uint8_t channels[NUM_CHANNELS] = {0, 1, 2};
 #endif
 
+/* To Do: add config function which checks max value given by adc and
+ * replace 3329 (max output of adc).
+ */
+// Trying to map adc output to 12bit range
 #define MAP(X) ((X) * 4095 / 3329)
 
 const char *TAG = "NPG-IDF";
@@ -122,7 +128,6 @@ adc_conv_task(void *arg) { // changed signature to proper FreeRTOS prototype
   uint32_t size_ret = 0;
   uint8_t result[CONV_FRAME_SIZE] = {0};
   uint16_t adc_reading = 0;
-  uint8_t channel_num = 0;
   uint8_t chords_packet[PACKET_LEN][SAMPLE_SIZE];
   uint8_t counter = 0;
 
@@ -143,7 +148,6 @@ adc_conv_task(void *arg) { // changed signature to proper FreeRTOS prototype
             adc_digi_output_data_t *parsed_data =
                 (void *)&result[(i + j * NUM_CHANNELS) *
                                 SOC_ADC_DIGI_RESULT_BYTES];
-            channel_num = parsed_data->type2.channel;
             adc_reading = MAP(parsed_data->type2.data);
             chords_packet[j][1 + i * 2] = (adc_reading >> 8) & 0xFF;
             chords_packet[j][2 + i * 2] = adc_reading & 0xFF;
@@ -160,7 +164,8 @@ adc_conv_task(void *arg) { // changed signature to proper FreeRTOS prototype
         }
 
 #ifdef DEBUG
-        uint16_t ch3 = (uint16_t)(chords_packet[1] << 8) | chords_packet[2];
+        uint16_t ch3 =
+            (uint16_t)(chords_packet[0][1] << 8) | chords_packet[0][2];
         ESP_LOGI("adc_conv_task", "counter: %d, CH3:%d, data_char_handle:%d",
                  chords_packet[0], ch3, data_char_handle);
 #endif
@@ -189,11 +194,12 @@ void app_main(void) {
 
   esp_pm_config_t pm_config = {.max_freq_mhz = 160,
                                .min_freq_mhz = 40,
-#if config_freertos_use_tickless_idle
+#ifndef DEBUG
+#if CONFIG_FREERTOS_USE_TICKLESS_IDLE
                                .light_sleep_enable = true
 #endif
+#endif
   };
-
   ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
 
   if (ret != ESP_OK) {

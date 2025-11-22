@@ -7,7 +7,6 @@
 #include <string.h>
 
 static const char *TAG = "GATT";
-volatile bool ble_streaming = false;
 
 // Private function declaration
 // BLE UUIDs – change if desired.
@@ -97,7 +96,8 @@ int gatt_svr_chr_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     // The incoming command is in ctxt->om->om_data, its length is
     // ctxt->om->om_len
     char cmd_buffer[20] = {0};
-    memcpy(cmd_buffer, ctxt->om->om_data, 20);
+    size_t copy_len = (ctxt->om->om_len) < 19 ? ctxt->om->om_len : 19;
+    memcpy(cmd_buffer, ctxt->om->om_data, copy_len);
     // Convert to uppercase for case-insensitive check
     for (int i = 0; i < ctxt->om->om_len; i++) {
       cmd_buffer[i] = toupper(cmd_buffer[i]);
