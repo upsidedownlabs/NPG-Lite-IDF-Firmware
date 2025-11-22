@@ -19,7 +19,7 @@
 #define CONV_FRAME_SIZE (NUM_CHANNELS * PACKET_LEN * SOC_ADC_DIGI_RESULT_BYTES)
 #define MAX_STORE_BUF_SIZE (CONV_FRAME_SIZE * 10)
 
-// #define DEBUG      // To disable light sleep & enable debug statements
+#define DEBUG // To disable light sleep & enable debug statements
 // #define SECONDARY_CH // To use adc channel 3-5, default is 0-2
 
 #ifdef SECONDARY_CH
@@ -167,7 +167,7 @@ adc_conv_task(void *arg) { // changed signature to proper FreeRTOS prototype
         uint16_t ch3 =
             (uint16_t)(chords_packet[0][1] << 8) | chords_packet[0][2];
         ESP_LOGI("adc_conv_task", "counter: %d, CH3:%d, data_char_handle:%d",
-                 chords_packet[0], ch3, data_char_handle);
+                 chords_packet[0][0], ch3, data_char_handle);
 #endif
 
       } else {
