@@ -34,7 +34,7 @@ Features:
 
 ## Data Acquisition
 
-A Python-based BLE data logger is available for streaming and recording biosignal data from NPG Lite.
+A Python-based BLE data logger is available for streaming and recording biopotential data from NPG Lite.
 
 ### Quick Start
 
@@ -44,11 +44,21 @@ pip install -r requirements.txt
 python record-log.py --outfile data.csv
 ```
 
+**View all options:**
+```bash
+python record-log.py --help
+```
+
 The script automatically:
 - Scans and connects to NPG Lite via BLE
 - Streams 3-channel biopotential data at 250 Hz
 - Saves timestamped data to CSV format
 - Generates summary statistics
+
+**Command-line options:**
+- `--duration` - Set recording duration in minutes (default: 10)
+- `--device-address` - Connect to specific BLE address
+- `--device-name-prefix` - Scan for custom device name
 
 For detailed usage instructions, configuration options, and troubleshooting, see [test/README.md](test/README.md).
 

@@ -113,7 +113,7 @@ python record-log.py --outfile data.csv --device-name-prefix MYNPG --duration 60
 
 ### 1. CSV Data File (`data.csv`)
 
-Contains timestamped biosignal samples with the following columns:
+Contains timestamped biopotential data with the following columns:
 
 | Column | Description |
 |--------|-------------|
