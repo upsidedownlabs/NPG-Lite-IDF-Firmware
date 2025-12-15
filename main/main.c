@@ -20,33 +20,38 @@
 // open science. Thank you for being part of this journey with us!
 
 #include "common.h"
+#include "driver/gpio.h"
 #include "esp_adc/adc_continuous.h"
 #include "esp_pm.h"
 #include "gap.h"
 #include "gatt.h"
 #include "hal/adc_types.h"
+#include "hal/gpio_types.h"
 #include "soc/soc_caps.h"
 #include <stdint.h>
-#include <stdio.h>
 
 #define SAMPLING_RATE 250
 #define PACKET_LEN 25
-#define NUM_CHANNELS 3
+#define NUM_CHANNELS 4 // 3 BioAmp channels, 1 Battery channel
 
-#define SAMPLE_SIZE (NUM_CHANNELS * 2 + 1)
+#define SAMPLE_SIZE ((NUM_CHANNELS - 1) * 2 + 1)
 // should be less than 256 - 3 (for ble)
 #define PACKET_SIZE (PACKET_LEN * SAMPLE_SIZE)
 
 #define CONV_FRAME_SIZE (NUM_CHANNELS * PACKET_LEN * SOC_ADC_DIGI_RESULT_BYTES)
 #define MAX_STORE_BUF_SIZE (CONV_FRAME_SIZE * 10)
 
-#define DEBUG // To disable light sleep & enable debug statements
-// #define SECONDARY_CH // To use adc channel 3-5, default is 0-2
+// #define DEBUG // To disable light sleep & enable debug statements
+#ifdef DEBUG
+#define DEBUG_PIN_1 22
+#define DEBUG_PIN_2 23
+#endif
 
+// #define SECONDARY_CH // To use adc channel 3-5, default is 0-2
 #ifdef SECONDARY_CH
-uint8_t channels[NUM_CHANNELS] = {3, 4, 5};
+uint8_t channels[NUM_CHANNELS] = {3, 4, 5, 6};
 #else
-uint8_t channels[NUM_CHANNELS] = {0, 1, 2};
+uint8_t channels[NUM_CHANNELS] = {0, 1, 2, 6};
 #endif
 
 /* To Do: add config function which checks max value given by adc and
@@ -143,6 +148,47 @@ void continuous_adc_init() {
       adc_continuous_register_event_callbacks(adc_handle, &cbs, NULL));
 }
 
+typedef struct {
+  float voltage;
+  uint8_t percent;
+} batt_point_t;
+
+static const batt_point_t batt_table[] = {
+    {3.27, 0},  {3.61, 5},  {3.69, 10}, {3.71, 15}, {3.73, 20}, {3.75, 25},
+    {3.77, 30}, {3.79, 35}, {3.80, 40}, {3.82, 45}, {3.84, 50}, {3.85, 55},
+    {3.87, 60}, {3.91, 65}, {3.95, 70}, {3.98, 75}, {4.02, 80}, {4.08, 85},
+    {4.11, 90}, {4.15, 95}, {4.20, 100}};
+
+const uint8_t batt_table_len = sizeof(batt_table) / sizeof(batt_table[0]);
+
+void battery_check(int battery_reading) {
+  float voltage = (battery_reading / 4095.0) * 3.3 - 0.14;
+  ESP_LOGI("debug", "vol bat: %f", voltage);
+  uint8_t percent = 0;
+  if (voltage < batt_table[0].voltage)
+    percent = batt_table[0].percent;
+  if (voltage > batt_table[batt_table_len - 1].voltage)
+    percent = batt_table[batt_table_len - 1].percent;
+
+  for (int i = 0; i < batt_table_len - 1; i++) {
+    float v1 = batt_table[i].voltage;
+    float v2 = batt_table[i + 1].voltage;
+
+    if (voltage >= v1 && voltage <= v2) {
+      uint8_t p1 = batt_table[i].percent;
+      uint8_t p2 = batt_table[i + 1].percent;
+
+      /* Linear interpolation */
+      percent = (uint8_t)(p1 + (voltage - v1) * (p2 - p1) / (v2 - v1));
+    }
+  }
+  if (percent < 5) {
+    nimble_port_stop(); // stop ble
+    adc_continuous_stop(adc_handle);
+    ESP_LOGE("NPG-IDF", "Low Battery, please charge device before use");
+  }
+}
+
 static void
 adc_conv_task(void *arg) { // changed signature to proper FreeRTOS prototype
   esp_err_t ret = ESP_OK;
@@ -152,12 +198,17 @@ adc_conv_task(void *arg) { // changed signature to proper FreeRTOS prototype
   uint8_t chords_packet[PACKET_LEN][SAMPLE_SIZE];
   uint8_t counter = 0;
 
+  int battery_reading = 0;
+
   adc_conv_task_handle = xTaskGetCurrentTaskHandle();
   continuous_adc_init();
   adc_continuous_start(adc_handle);
   while (1) {
     while (streaming) {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#ifdef DEBUG
+      gpio_set_level(DEBUG_PIN_1, 1);
+#endif
       ret = adc_continuous_read(adc_handle, result, CONV_FRAME_SIZE, &size_ret,
                                 0);
 
@@ -169,11 +220,18 @@ adc_conv_task(void *arg) { // changed signature to proper FreeRTOS prototype
             adc_digi_output_data_t *parsed_data =
                 (void *)&result[(i + j * NUM_CHANNELS) *
                                 SOC_ADC_DIGI_RESULT_BYTES];
-            adc_reading = MAP(parsed_data->type2.data);
-            chords_packet[j][1 + i * 2] = (adc_reading >> 8) & 0xFF;
-            chords_packet[j][2 + i * 2] = adc_reading & 0xFF;
+            if (i < 3) {
+              adc_reading = MAP(parsed_data->type2.data);
+              chords_packet[j][1 + i * 2] = (adc_reading >> 8) & 0xFF;
+              chords_packet[j][2 + i * 2] = adc_reading & 0xFF;
+            } else {
+              adc_reading = MAP(parsed_data->type2.data * 2);
+              battery_reading += adc_reading;
+            }
           }
         }
+        battery_reading = battery_reading / PACKET_LEN;
+        battery_check(battery_reading);
         // send over ble
         struct os_mbuf *om =
             ble_hs_mbuf_from_flat((void *)chords_packet, PACKET_SIZE);
@@ -195,6 +253,9 @@ adc_conv_task(void *arg) { // changed signature to proper FreeRTOS prototype
         ESP_LOGD("adc_conv_task", "Corrupted reading from adc, size_ret:%d",
                  size_ret);
       }
+#ifdef DEBUG
+      gpio_set_level(DEBUG_PIN_1, 0);
+#endif
     }
     vTaskDelay(pdMS_TO_TICKS(100)); // use pdMS_TO_TICKS for portable delay
   }
@@ -227,6 +288,14 @@ void app_main(void) {
     ESP_LOGE(TAG, "failed to initialize nvs flash, error code: %d ", ret);
     return;
   }
+#ifdef DEBUG
+  gpio_config_t gpio_conf = {.pin_bit_mask =
+                                 (1ULL << DEBUG_PIN_1) | (1ULL << DEBUG_PIN_2),
+                             .mode = GPIO_MODE_OUTPUT,
+                             .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                             .pull_up_en = GPIO_PULLUP_DISABLE};
+  gpio_config(&gpio_conf);
+#endif
 
   /* NimBLE stack initialization */
   ret = nimble_port_init();
